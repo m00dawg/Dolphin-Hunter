@@ -1,0 +1,24 @@
+TODO:
+ - Constraints output (ie do not print innodb_log_buffer_size unless it's really far off)
+ - Human readable (-u, --human) to pretty print bytes (KB, GB, etc.)
+ - Add per sec stats back as a flag?
+ - PBXT Support
+ - InnoDB Version
+ - Detect symlink for datadir
+ - /var/run error
+ - innodb_autoinc_lock_mode (plus binlog_format)
+ - Percona slow patches
+ - mysqld --help --verbose ?
+ - String Templates
+ 
+    Convert to String Templates
+    http://docs.python.org/release/2.5.2/lib/node40.html
+
+    >>> import string
+    >>> t = string.Template('${variable}')
+    >>> t.substitute(variable='foo')
+
+    Or http://pythonpaste.org/tempita/
+
+    With templates:
+        + Disk Based: {{ created_tmp_disk_tables / created_tmp_tables|percent}} ({{created_tmp_disk_tables|rate}} Per Sec)
