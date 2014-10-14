@@ -6,8 +6,6 @@ MySQL Runtime Analyzer
 
 Author: Tim "Sweetums" Soderstrom
 With contributions from BJ Dierkes and Andrew Garner
-
-For questions, contact the Rackspace MySQL DBA team.
 """
 
 import sys
@@ -36,7 +34,7 @@ from functions import AttributeAdapter
 ##################
 # Global Variables
 ##################
-version = '0.6.2'
+version = '0.7.0'
 # How many items to list from list output
 # (Such as information_schema reuslts)
 limit = 10
@@ -357,7 +355,6 @@ MySQL Runtime Analyzer
 Author: Tim "Sweetums" Soderstrom
 With contributions from BJ Dierkes and Andrew Garner
 
-For questions, contact the Rackspace MySQL DBA team.
 """ % version)
 
 # Callback for OptionParser when -a is used
