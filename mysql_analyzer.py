@@ -36,7 +36,7 @@ from functions import AttributeAdapter
 ##################
 # Global Variables
 ##################
-version = '0.7.0'
+version = '0.6.2'
 # How many items to list from list output
 # (Such as information_schema reuslts)
 limit = 10
@@ -136,7 +136,7 @@ def display_mysql_myisam_results(mysql_info):
 
 def display_mysql_innodb_results(mysql_info):
     print_header("InnoDB", 2)
-    if mysql_info.vars.have_innodb  == ('DISABLED' or False):
+    if mysql_info.vars.innodb_version == ('DISABLED' or False):
         print "Disabled"
     else:
         try:
@@ -195,6 +195,7 @@ def display_mysql_thread_results(mysql_info):
 
 def display_slave_info(mysql_info):
     print_header('Replication', 2)
+
     if mysql_info.slave_status is None:
         print "Not Enabled"
         return
@@ -291,6 +292,40 @@ def display_schema_info(mysql):
             format_bytes(row['Index Length']))
 
 
+def check_health(mysql):
+    mysql_info = mysql.mysql_info
+    errors = ""
+    print ""
+    print_header("Health Checks")
+    print ""
+
+    if mysql_info.slave_status:
+        if mysql_info.slave_status.slave_io_running != 'Yes':
+            errors += "Slave IO Thread Not Running\n"
+        if mysql_info.slave_status.slave_sql_running != 'Yes':
+            errors += "Slave SQL Thread Not Running\n"
+        if mysql_info.slave_status.seconds_behind_master > 300:
+            errors +=  "Slave Lagging Too Far Behind\n"
+        if mysql_info.slave_status.last_error:
+            errors +=  "Slave Error Reported\n"
+    if mysql_info.vars.wsrep_provider:
+        if mysql_info.status.wsrep_cluster_size < 3:
+            errors += "Galera Node Missing\n"
+        if not mysql_info.status.wsrep_ready:
+            errors += "Galera Cluster Not Ready\n"
+    if mysql_info.vars.innodb_version:
+        if mysql_info.innodb_buffer_pool_hit_rate < 95:
+            errors += "InnoDB Buffer Pool Hit Rate Low\n"
+
+
+
+    if errors != "":
+        print errors
+        sys.exit(1)
+    else:
+        print "Everything is all good!"
+        sys.exit(0)
+
 #################
 # Meat & Potatoes
 #################
@@ -361,16 +396,9 @@ def main():
     parser.add_option('-s', '--schema', action='callback',
         dest="actions", callback=append_const_callback(40, display_schema_info),
         help="Print Schema Statistics (Avoid For Large #'s of Tables/DBs)")
-    parser.add_option('-h', '--health', action='callback',
+    parser.add_option('-m', '--monitor', action='callback',
         dest="actions", callback=append_const_callback(50, check_health),
         help="Look at various metrics in MySQL and bomb if there is a problem. Useful for things like Monit")
-
-    mysql_health_group = OptionGroup(parser, "MySQL Health Check Options")
-    mysql_login_group.add_option('-d', '--delay', dest="delay",
-        help="MySQL Slave Delay")
-mysql_login_group.add_option('-d', '--delay', dest="delay",
-    help="MySQL Slave Delay")
-      parser.add_option_group(mysql_health_group)
 
     mysql_login_group = OptionGroup(parser, "MySQL Login Options")
     mysql_login_group.add_option('-u', '--username', dest="user",
