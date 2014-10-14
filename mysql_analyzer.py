@@ -36,7 +36,7 @@ from functions import AttributeAdapter
 ##################
 # Global Variables
 ##################
-version = '0.6.2'
+version = '0.7.0'
 # How many items to list from list output
 # (Such as information_schema reuslts)
 limit = 10
@@ -48,7 +48,7 @@ TWO_DAYS_IN_SECONDS = 60 * 60 * 24 * 2
 def display_system_info(mysql):
     system_info = dict()
     print "Gathering system information...",
-    
+
     system_info['architecture'] = platform.machine()
     if platform.system() == 'Linux':
         system_info['totalMemory'] = format_bytes(round(os.sysconf('SC_PHYS_PAGES') * \
@@ -61,7 +61,7 @@ def display_system_info(mysql):
         system_info['freeMemory'] = 'Unknown'
         system_info['cpuCores'] = 'Unknown'
     print "done!\n"
-    
+
     print_header('Local System Information', 1)
     print_stat('CPU Cores', system_info['cpuCores'], 1)
     print_stat('Total Memory', system_info['totalMemory'], 1)
@@ -84,9 +84,9 @@ def display_mysql_global_results(mysql_info):
         (int(mysql_info.status.created_tmp_disk_tables),
          int(mysql_info.status.created_tmp_tables),
          format_percent(mysql_info.tmp_tables_disk_pct)))
-    print_stat("Sort Merge Passes", 
+    print_stat("Sort Merge Passes",
         int(mysql_info.status.sort_merge_passes))
-    print_stat("Non-Indexed Joins", 
+    print_stat("Non-Indexed Joins",
         int(mysql_info.status.select_full_join))
     print_stat("Open Files", '%s (limit %s)' % \
         (int(mysql_info.status.open_files),
@@ -97,7 +97,7 @@ def display_mysql_global_results(mysql_info):
 	print_stat("Query Cache", "Disabled")
     else:
     	print_stat("Query Cache"),
-        print_stat("Size", 
+        print_stat("Size",
             format_bytes(mysql_info.vars.query_cache_size), 2)
         print_stat("Hit Rate",
             format_percent(mysql_info.query_cache_hitrate), 2)
@@ -112,28 +112,28 @@ def display_mysql_global_results(mysql_info):
         (int(mysql_info.status.slow_queries),
          int(mysql_info.status.com_select),
          format_percent(mysql_info.slow_query_pct)), 2)
-    print_stat("Long Query Time", 
+    print_stat("Long Query Time",
         format_interval(mysql_info.vars.long_query_time), 2)
-    print_stat("Log Non-Indexed Queries", 
+    print_stat("Log Non-Indexed Queries",
         mysql_info.vars.log_queries_not_using_indexes, 2)
     print_stat('Binary Log', '')
-    print_stat('Binary Logging', 
+    print_stat('Binary Logging',
         mysql_info.vars.log_bin, 2)
     try:
-        print_stat('Binlog Format', 
+        print_stat('Binlog Format',
             mysql_info.vars.binlog_format, 2)
     except KeyError:
         print_stat('Binlog Format', 'Not-Detected / Pre 5.1', 2)
     print_stat("Read Frequency", format_percent(mysql_info.read_pct))
-    
+
 def display_mysql_myisam_results(mysql_info):
     print_header("MyISAM", 2)
     print_stat("Key Buffer")
     print_stat("Size", format_bytes(mysql_info.vars.key_buffer_size), 2)
     print_stat("Used",  "%s (%s)" % \
-        (format_bytes(mysql_info.key_buffer_used), 
+        (format_bytes(mysql_info.key_buffer_used),
          format_percent(mysql_info.key_buffer_used_pct)), 2)
-         
+
 def display_mysql_innodb_results(mysql_info):
     print_header("InnoDB", 2)
     if mysql_info.vars.have_innodb  == ('DISABLED' or False):
@@ -150,12 +150,12 @@ def display_mysql_innodb_results(mysql_info):
             mysql_info.vars.innodb_log_group_home_dir, 2)
         print_stat("InnoDB Data File Path",
             mysql_info.vars.innodb_data_file_path, 2)
-        print_stat('Buffer Pool', '')    
+        print_stat('Buffer Pool', '')
         print_stat("Usage", "%s of %s (%s)" % \
             (format_bytes(mysql_info.innodb_buffer_pool_used),
              format_bytes(mysql_info.vars.innodb_buffer_pool_size),
              format_percent(mysql_info.innodb_buffer_pool_used_pct)), 2)
-        print_stat("Hit Rate", 
+        print_stat("Hit Rate",
             format_percent(mysql_info.innodb_buffer_pool_hit_rate), 2)
         print_stat('History List', mysql_info.ibstatus.history_list_length)
         print_stat("File Per Table",
@@ -167,13 +167,13 @@ def display_mysql_innodb_results(mysql_info):
             int(mysql_info.vars.innodb_flush_log_at_trx_commit))
         print_stat("Flush Method",
             mysql_info.innodb_flush_method)
-        print_stat("Thread Concurrency", 
+        print_stat("Thread Concurrency",
             int(mysql_info.vars.innodb_thread_concurrency))
         print_stat("Log File Size", "%s x %s logs (%s total)" % \
             (format_bytes(mysql_info.vars.innodb_log_file_size),
              int(mysql_info.vars.innodb_log_files_in_group),
              format_bytes(mysql_info.innodb_log_file_size_total)))
-                        
+
 def display_mysql_thread_results(mysql_info):
     print_header("Threads", 2)
     print_stat("Buffers")
@@ -192,43 +192,43 @@ def display_mysql_thread_results(mysql_info):
         int(mysql_info.status.threads_cached),
         int(mysql_info.status.threads_running),
         int(mysql_info.status.threads_created))
-        
+
 def display_slave_info(mysql_info):
     print_header('Replication', 2)
     if mysql_info.slave_status is None:
         print "Not Enabled"
         return
-    print_stat('Master', 
+    print_stat('Master',
         mysql_info.slave_status.master_host)
     print_stat('Logs', '')
     print_stat('Spooled Master Log File',
         '%s (pos: %s)' % \
-        (mysql_info.slave_status.master_log_file, 
+        (mysql_info.slave_status.master_log_file,
          mysql_info.slave_status.read_master_log_pos), 2)
-    print_stat('Executed Master Log File', 
+    print_stat('Executed Master Log File',
         '%s (pos: %s)' % \
         (mysql_info.slave_status.relay_master_log_file,
          mysql_info.slave_status.exec_master_log_pos), 2)
     print_stat('Relay Log File',
         '%s (pos: %s)' % \
-        (mysql_info.slave_status.relay_log_file,         
+        (mysql_info.slave_status.relay_log_file,
          mysql_info.slave_status.relay_log_pos), 2)
     # Using a long-style if for Python 2.4 compatibility
     #print_stat('Relay Log Space Limit',
     #(format_bytes(mysql_info.vars.relay_log_space_limit))
     # if mysql_info.vars.relay_log_space_limit != 0 else 'Unlimited')
     if mysql_info.vars.relay_log_space_limit != 0:
-        print_stat('Relay Log Space Limit', 
+        print_stat('Relay Log Space Limit',
             format_bytes(mysql_info.vars.relay_log_space_limit))
     else:
         print_stat('Relay Log Space Limit', 'Unlimited')
-    print_stat('IO Thread Running', 
+    print_stat('IO Thread Running',
         mysql_info.slave_status.slave_io_running)
     print_stat('SQL Thread Running',
         mysql_info.slave_status.slave_sql_running)
     print_stat('Seconds Behind Master',
         mysql_info.slave_status.seconds_behind_master)
-    print_stat('Last Error', 
+    print_stat('Last Error',
         mysql_info.slave_status.last_error)
 
 def display_mysql_results(mysql):
@@ -238,7 +238,7 @@ def display_mysql_results(mysql):
     print_header('MySQL Information', 1)
     print ""
     display_mysql_global_results(mysql_info)
-    print ""    
+    print ""
     display_mysql_thread_results(mysql_info)
     print ""
     display_mysql_myisam_results(mysql_info)
@@ -246,7 +246,7 @@ def display_mysql_results(mysql):
     display_mysql_innodb_results(mysql_info)
     print ""
     display_slave_info(mysql_info)
-    
+
 
 def display_innodb_transactions(mysql):
     print ""
@@ -277,8 +277,8 @@ def display_schema_info(mysql):
         ('Database', 'Data Length', 'Index Length')
     for row in mysql.schema_largest_dbs(limit):
         print '%-32s : %12s : %12s' % \
-            (row['Database'], 
-            format_bytes(row['Data Length']), 
+            (row['Database'],
+            format_bytes(row['Data Length']),
             format_bytes(row['Index Length']))
     print ""
     print_header('%s Largest Tables' % limit, 2)
@@ -286,8 +286,8 @@ def display_schema_info(mysql):
         ('Table', 'Data Length', 'Index Length')
     for row in mysql.schema_largest_tables(limit):
         print '%-32s : %12s : %12s' % \
-            (row['Table'], 
-            format_bytes(row['Data Length']), 
+            (row['Table'],
+            format_bytes(row['Data Length']),
             format_bytes(row['Index Length']))
 
 
@@ -331,7 +331,7 @@ def set_all(option, opt, value, parser):
         (10, display_system_info),
         (20, display_mysql_results),
         (30, display_innodb_transactions),
-        (40, display_schema_info)
+        (40, display_schema_info),
         ])
 
 # For Python 2.4 compatibility
@@ -346,12 +346,12 @@ def main():
     # the output is always in the same order. It also helps avoid priting
     # information more than once.
     parser = OptionParser()
-    parser.add_option('-a', '--all', action='callback', type=None, 
+    parser.add_option('-a', '--all', action='callback', type=None,
         callback=set_all,
         help="Gather all possible information")
     parser.add_option('-y', '--system', action='callback',
         dest="actions", callback=append_const_callback(10,display_system_info),
-        help="Print System Information")    
+        help="Print System Information")
     parser.add_option('-i', '--info', action='callback',
         dest="actions", callback=append_const_callback(20,display_mysql_results),
         help="MySQL Information")
@@ -361,20 +361,30 @@ def main():
     parser.add_option('-s', '--schema', action='callback',
         dest="actions", callback=append_const_callback(40, display_schema_info),
         help="Print Schema Statistics (Avoid For Large #'s of Tables/DBs)")
+    parser.add_option('-h', '--health', action='callback',
+        dest="actions", callback=append_const_callback(50, check_health),
+        help="Look at various metrics in MySQL and bomb if there is a problem. Useful for things like Monit")
+
+    mysql_health_group = OptionGroup(parser, "MySQL Health Check Options")
+    mysql_login_group.add_option('-d', '--delay', dest="delay",
+        help="MySQL Slave Delay")
+mysql_login_group.add_option('-d', '--delay', dest="delay",
+    help="MySQL Slave Delay")
+      parser.add_option_group(mysql_health_group)
 
     mysql_login_group = OptionGroup(parser, "MySQL Login Options")
-    mysql_login_group.add_option('-u', '--username', dest="user", 
+    mysql_login_group.add_option('-u', '--username', dest="user",
         help="MySQL User")
-    mysql_login_group.add_option('-p', '--password', dest="passwd", 
+    mysql_login_group.add_option('-p', '--password', dest="passwd",
         help="MySQL Password")
-    mysql_login_group.add_option('-H', '--hostname', dest="host", 
+    mysql_login_group.add_option('-H', '--hostname', dest="host",
         help="MySQL host to connect to")
     mysql_login_group.add_option('-P', '--port', dest='port',
         type='int', help="MySQL port to connect to")
-    mysql_login_group.add_option('-S', '--socket', dest="unix_socket", 
+    mysql_login_group.add_option('-S', '--socket', dest="unix_socket",
         help="Path to MySQL unix socket")
     parser.add_option_group(mysql_login_group)
-        
+
     parser.set_defaults(actions=[])
     opts, args = parser.parse_args()
 
@@ -398,5 +408,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
-

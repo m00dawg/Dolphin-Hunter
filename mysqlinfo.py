@@ -67,7 +67,7 @@ class MySQL:
                 else:
                     slave_status = None
     
-                if(vars.have_innodb == True):
+                if(vars.innodb_version):
                     cursor.execute("SHOW ENGINE INNODB STATUS")
 #                    fields = [f[0] for f in cursor.description]
 #                    innodb_status = dict(zip(fields, cursor.fetchone()))['Status']
