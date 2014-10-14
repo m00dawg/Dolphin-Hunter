@@ -804,10 +804,10 @@ def display_schema_info(mysql):
 
 
 def check_health(mysql):
-    mysql_info = mysql.mysql_info
     errors = ""
     print ""
     print_header("Health Checks")
+    mysql_info = mysql.mysql_info
     print ""
 
     if mysql_info.slave_status:
@@ -819,15 +819,19 @@ def check_health(mysql):
             errors +=  "Slave Lagging Too Far Behind\n"
         if mysql_info.slave_status.last_error:
             errors +=  "Slave Error Reported\n"
+
     if mysql_info.vars.wsrep_provider:
         if mysql_info.status.wsrep_cluster_size < 3:
             errors += "Galera Node Missing\n"
         if not mysql_info.status.wsrep_ready:
             errors += "Galera Cluster Not Ready\n"
+
     if mysql_info.vars.innodb_version:
         if mysql_info.innodb_buffer_pool_hit_rate < 95:
             errors += "InnoDB Buffer Pool Hit Rate Under 95%\n"
-
+    if (mysql_info.status.threads_connected / 
+         mysql_info.vars.max_connections * 100) > 75:
+        errors += "Open Connections Above 75% of Max\n"
 
 
     if errors != "":
