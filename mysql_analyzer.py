@@ -29,7 +29,7 @@ from mysqlinfo import MySQL, MySQLError
 from functions import format_interval, format_bytes, format_percent
 from functions import print_header, print_stat
 from functions import AttributeAdapter
-#from colorize import color_print
+from colorize import color_print
 
 ##################
 # Global Variables
@@ -313,7 +313,7 @@ def check_health(mysql):
             errors += "Galera Cluster Not Ready\n"
     if mysql_info.vars.innodb_version:
         if mysql_info.innodb_buffer_pool_hit_rate < 95:
-            errors += "InnoDB Buffer Pool Hit Rate Low\n"
+            errors += "InnoDB Buffer Pool Hit Rate Under 95%\n"
 
 
 
