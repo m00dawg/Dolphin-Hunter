@@ -34,7 +34,7 @@ from colorize import color_print
 ##################
 # Global Variables
 ##################
-version = '0.7.0'
+version = '0.7.1'
 # How many items to list from list output
 # (Such as information_schema reuslts)
 limit = 10
@@ -307,16 +307,21 @@ def check_health(mysql):
         if mysql_info.slave_status.last_error:
             errors +=  "Slave Error Reported\n"
 
-    if mysql_info.vars.wsrep_provider:
-        if mysql_info.status.wsrep_cluster_size < 3:
-            errors += "Galera Node Missing\n"
-        if not mysql_info.status.wsrep_ready:
-            errors += "Galera Cluster Not Ready\n"
+    # If wsrep variable does not exist, we can assume it is not
+    # a Galera server, so we skip the checks
+    try:
+      if mysql_info.vars.wsrep_provider:
+          if mysql_info.status.wsrep_cluster_size < 3:
+              errors += "Galera Node Missing\n"
+          if not mysql_info.status.wsrep_ready:
+              errors += "Galera Cluster Not Ready\n"
+    except:
+        pass
 
     if mysql_info.vars.innodb_version:
         if mysql_info.innodb_buffer_pool_hit_rate < 95:
             errors += "InnoDB Buffer Pool Hit Rate Under 95%\n"
-    if (mysql_info.status.threads_connected / 
+    if (mysql_info.status.threads_connected /
          mysql_info.vars.max_connections * 100) > 75:
         errors += "Open Connections Above 75% of Max\n"
 
