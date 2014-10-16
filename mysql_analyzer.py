@@ -318,13 +318,19 @@ def check_health(mysql):
     except:
         pass
 
-    if mysql_info.vars.innodb_version:
-        if mysql_info.innodb_buffer_pool_hit_rate < 95:
-            errors += "InnoDB Buffer Pool Hit Rate Under 95%\n"
-    if (mysql_info.status.threads_connected /
-         mysql_info.vars.max_connections * 100) > 75:
-        errors += "Open Connections Above 75% of Max\n"
-
+    # Same thing as above - if, somehow InnoDB is not enabled
+    # we don't need to check parameters for it. There could
+    # be cases where you'd want to error if InnoDB is unavailable
+    # but using 'innodb = FORCE' within MySQL is a better solution.
+    try:
+        if mysql_info.vars.innodb_version:
+            if mysql_info.innodb_buffer_pool_hit_rate < 95:
+                errors += "InnoDB Buffer Pool Hit Rate Under 95%\n"
+        if (mysql_info.status.threads_connected /
+            mysql_info.vars.max_connections * 100) > 75:
+                errors += "Open Connections Above 75% of Max\n"
+    except:
+        pass
 
     if errors != "":
         print errors
