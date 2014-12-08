@@ -34,10 +34,12 @@ from colorize import color_print
 ##################
 # Global Variables
 ##################
-version = '0.7.1'
+version = '0.7.2'
 # How many items to list from list output
 # (Such as information_schema reuslts)
 limit = 10
+
+# Constant for 2 days
 TWO_DAYS_IN_SECONDS = 60 * 60 * 24 * 2
 
 ####################
@@ -292,10 +294,12 @@ def display_schema_info(mysql):
 
 def check_health(mysql):
     errors = ""
-    print ""
     print_header("Health Checks")
     mysql_info = mysql.mysql_info
     print ""
+
+    if mysql_info.queries['long_running_queries'] > 0:
+	errors += "One or more long running queries detected\n"
 
     if mysql_info.slave_status:
         if mysql_info.slave_status.slave_io_running != 'Yes':

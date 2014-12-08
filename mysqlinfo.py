@@ -7,6 +7,9 @@ from innoparse import Transaction, InnodbStatus
 
 MySQLError = MySQLdb.MySQLError
 
+# Variables
+long_query_limit = 14400
+
 def convert(value):
     try:
         # convert anything that looks like a number to a number
@@ -72,11 +75,18 @@ class MySQL:
 #                    fields = [f[0] for f in cursor.description]
 #                    innodb_status = dict(zip(fields, cursor.fetchone()))['Status']
                     innodb_status = InnodbStatus(cursor.fetchone()[-1])
-                    cursor.close()
                 else:
                     innodb_status = "Disabled"
+		
+		# Number of queries running for longer than 4 hours
+		cursor.execute("SELECT COUNT(*) AS cnt FROM information_schema.PROCESSLIST WHERE COMMAND='Query' AND TIME > %s", 
+			long_query_limit)
+		row = cursor.fetchone()
+		queries = dict()
+		queries['long_running_queries'] = row[0]
                     
-                self.my_mysql_info = MySQLInfo(status, vars, slave_status, innodb_status)
+		cursor.close()
+                self.my_mysql_info = MySQLInfo(status, vars, slave_status, innodb_status, queries)
                 print "done!"
             except MySQLdb.MySQLError, exc:
                 print '[%d] %s' % exc.args
@@ -149,11 +159,12 @@ class MySQL:
         raise
 
 class MySQLInfo(object):
-    def __init__(self, status, vars, slave_status, ibstatus):
+    def __init__(self, status, vars, slave_status, ibstatus, queries):
         self.status = status
         self.vars = vars
         self.ibstatus = ibstatus        
         self.slave_status = slave_status
+	self.queries = queries
 
     @property
     def key_buffer_used_pct(self):

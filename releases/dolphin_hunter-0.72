@@ -1,0 +1,978 @@
+#!/usr/bin/env python
+import sys
+
+if sys.version_info < (2, 4):
+    print "Python 2.4 or later required. Sorry"
+    sys.exit(1)
+
+import re
+import time
+import platform
+import os
+import string
+from optparse import OptionParser, OptionGroup
+import warnings
+
+warnings.simplefilter("ignore")
+
+import MySQLdb
+
+# Local Imports
+#from mysqlinfo import MySQL, MySQLError
+#from functions import format_interval, format_bytes, format_percent
+#f#rom functions import print_header, print_stat
+#from functions import AttributeAdapter
+#from innoparse import Transaction, InnodbStatus
+#from colorize import color_print
+
+
+# Generic Helper Functions
+
+#from colorize import color_print
+
+# Convert Seconds to a human readable format
+# Contributed from Holland
+def format_interval(seconds):
+    """ Format an integer number of seconds to a human readable string."""
+    units = [
+        (('week', 'weeks'), 604800),
+        (('day', 'days'), 86400),
+        (('hour', 'hours'), 3600),
+        (('minute', 'minutes'), 60),
+        #(('second', 'seconds'), 1)
+    ]
+    result = []
+    for names, value in units:
+        n, seconds = divmod(seconds, value)
+        if n > 0:
+            result.append('%d %s' % (n, names[n > 1]))
+    if seconds:
+        result.append("%.2f %s" % (seconds, ['second', 'seconds'][seconds != 1.0]))
+    return ', '.join(result)
+    
+# Format a number (presumably bytes) into a more human readable format.
+# Contributed from Holland
+def format_bytes(bytes, precision=2):
+   """Format an integer number of bytes to a human readable string."""
+   import math
+   bytes = float(bytes)
+
+   if bytes != 0:
+       exponent = int(math.log(abs(bytes), 1024))
+   else:
+       exponent = 0
+
+   return "%.*f%s" % (precision,
+    bytes / (1024.0 ** exponent),
+    ['  B',' KB',' MB',' GB',' TB',' PB',' EB',' ZB',' YB'][exponent]
+    )
+
+def format_percent(percentage, precision=2):
+    return "%.2f%%" % round(percentage, precision)
+
+# Print an ASCII-art header
+def print_header(text, level=1):
+    if level == 1:
+        seperator = '-' * (len(text) + 2)
+        print "%s%s%s" % ('+', seperator, '+') 
+        print "|", text, "|"
+#        print "|",
+#        color_print(text, 'WHITE'),
+#        print "|"
+        print "%s%s%s" % ('+', seperator, '+')    
+    elif level == 2:
+        print text
+        print '-' * len(text)
+        
+def print_stat(item, value = '', level=1):
+    if level == 1:
+        print '-',
+        #color_print('-', 'BLUE')
+    elif level == 2:
+        print '  +',
+        #color_print('  +', 'RED')
+    elif level == 3:
+        print '    >',
+        #color_print('    >', 'YELLOW')
+    print "%s: %s" % (item, value)
+    
+class AttributeAdapter(dict):
+    def __getattr__(self, key):
+        return dict.__getitem__(self, key)
+
+    def __setattr__(self, key, value):
+        dict.__setitem__(self, key, value)
+
+
+MySQLError = MySQLdb.MySQLError
+
+# Variables
+long_query_limit = 14400
+
+def convert(value):
+    try:
+        # convert anything that looks like a number to a number
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        # convert anything that looks like a boolean to a bool
+        return bool(['OFF','ON'].index(value))
+    except ValueError:
+        pass
+    try:
+        # another bool format
+        return bool(['NO','YES'].index(value))
+    except ValueError:
+        pass
+    if value == '':
+        return None
+    # otherwise, remain as normal text
+    return value
+
+class MySQL:
+    my_mysql_info = None
+
+    def __init__(self, *args, **kwargs):
+        self._connection = MySQLdb.connect(*args, **kwargs)
+
+    """ Obtained from Holland """
+    def server_version(self):
+        """
+        server_version(self)
+        returns a numeric tuple: major, minor, revision versions (respectively)
+        """
+        version = self.get_server_info()
+        m = re.match(r'^(\d+)\.(\d+)\.(\d+)', version)
+        if m:
+            return tuple([int(v) for v in m.groups()])
+        else:
+            raise MySQLError("Could not match server version: %r" % version)
+
+    def collect(self):
+        if self.my_mysql_info is None:
+            print "Gathering MySQL information...",
+            # Grab the STATUS and VARIABLES from MySQL and put them both into dictionaries
+            try:
+                cursor = self._connection.cursor()
+                cursor.execute("SHOW GLOBAL STATUS")
+                status = AttributeAdapter(dict([(key.lower(), convert(value))
+                        for key, value in cursor.fetchall()]))
+                cursor.execute("SHOW GLOBAL VARIABLES")
+                vars = AttributeAdapter(dict([(key.lower(), convert(value))
+                         for key, value in cursor.fetchall()]))
+
+                cursor.execute("SHOW SLAVE STATUS")
+                if cursor.rowcount > 0:
+                    fields = [f[0].lower() for f in cursor.description]
+                    slave_status = AttributeAdapter(dict(zip(fields, cursor.fetchone())))
+                else:
+                    slave_status = None
+    
+                if(vars.innodb_version):
+                    cursor.execute("SHOW ENGINE INNODB STATUS")
+#                    fields = [f[0] for f in cursor.description]
+#                    innodb_status = dict(zip(fields, cursor.fetchone()))['Status']
+                    innodb_status = InnodbStatus(cursor.fetchone()[-1])
+                else:
+                    innodb_status = "Disabled"
+		
+		# Number of queries running for longer than 4 hours
+		cursor.execute("SELECT COUNT(*) AS cnt FROM information_schema.PROCESSLIST WHERE COMMAND='Query' AND TIME > %s", 
+			long_query_limit)
+		row = cursor.fetchone()
+		queries = dict()
+		queries['long_running_queries'] = row[0]
+                    
+		cursor.close()
+                self.my_mysql_info = MySQLInfo(status, vars, slave_status, innodb_status, queries)
+                print "done!"
+            except MySQLdb.MySQLError, exc:
+                print '[%d] %s' % exc.args
+                print 'Unable to gather information from MySQL!\nPerhaps the MySQL ' \
+                    'user we are connecting with doese not have proper permissions?'
+                sys.exit()
+        return self.my_mysql_info
+    
+    @property
+    def mysql_info(self):
+        self.collect()
+        return self.my_mysql_info
+        
+    ###############
+    # Schema Info #
+    ###############
+    @property
+    def schema_engine_summary(self):
+        try:
+            cursor = self._connection.cursor(MySQLdb.cursors.DictCursor)
+            cursor.execute("SELECT ENGINE AS Engine, COUNT(ENGINE) AS Count, \
+                SUM(DATA_LENGTH) AS 'Data Length', \
+                SUM(INDEX_LENGTH) AS 'Index Length' \
+                FROM information_schema.TABLES WHERE ENGINE IS NOT NULL \
+                GROUP BY ENGINE")
+            engine_summary = cursor.fetchall()
+            cursor.close()
+            return engine_summary
+        except MySQLError, exc:
+            self.mysql_schema_error()
+            
+    def schema_largest_dbs(self, limit=10):
+        try:
+            cursor = self._connection.cursor(MySQLdb.cursors.DictCursor)
+            cursor.execute("SELECT TABLE_SCHEMA AS 'Database', \
+                SUM(DATA_LENGTH) AS 'Data Length', \
+                SUM(INDEX_LENGTH) AS 'Index Length' \
+                FROM information_schema.TABLES \
+                WHERE TABLE_SCHEMA != 'information_schema' \
+                GROUP BY TABLE_SCHEMA \
+                ORDER BY SUM(DATA_LENGTH) DESC, SUM(INDEX_LENGTH) DESC \
+                LIMIT %s", limit)
+            largest_dbs = cursor.fetchall()
+            cursor.close()
+            return largest_dbs
+        except Exception:
+            self.mysql_schema_error()
+    
+    def schema_largest_tables(self, limit=10):
+        try:
+            cursor = self._connection.cursor(MySQLdb.cursors.DictCursor)
+            cursor.execute("SELECT \
+                CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS 'Table', \
+                DATA_LENGTH AS 'Data Length', \
+                INDEX_LENGTH AS 'Index Length' \
+                FROM information_schema.TABLES \
+                WHERE \
+                TABLE_SCHEMA != 'information_schema' \
+                ORDER BY DATA_LENGTH DESC, INDEX_LENGTH DESC \
+                LIMIT %s", limit)
+            largest_tables = cursor.fetchall()
+            cursor.close()
+            return largest_tables
+        except Exceptoion:
+                self.mysql_schema_error()
+            
+    def mysql_schema_error(self):
+        print 'Unable to schema information from MySQL!\nPerhaps the MySQL ' \
+            'user we are connecting with doese not have proper permissions?'
+        raise
+
+class MySQLInfo(object):
+    def __init__(self, status, vars, slave_status, ibstatus, queries):
+        self.status = status
+        self.vars = vars
+        self.ibstatus = ibstatus        
+        self.slave_status = slave_status
+	self.queries = queries
+
+    @property
+    def key_buffer_used_pct(self):
+        status = self.status
+        try:
+            return (status.key_blocks_used / status.key_blocks_unused) * 100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def key_buffer_used(self):
+        status = self.status
+        key_buffer_size = self.vars.key_buffer_size
+        try:
+            return (status.key_blocks_used / 
+                    status.key_blocks_unused * 
+                    key_buffer_size)
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def key_buffer_hitrate(self):
+        status = self.status
+        try:
+            return ((1 - status.key_reads) / status.key_read_requests)*100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def innodb_buffer_pool_used(self):
+        status = self.status
+        return (status.innodb_buffer_pool_pages_total - 
+                status.innodb_buffer_pool_pages_free) * \
+                status.innodb_page_size
+
+    @property
+    def innodb_buffer_pool_used_pct(self):
+        status = self.status
+        try:
+            return (1 - status.innodb_buffer_pool_pages_free  /
+                        status.innodb_buffer_pool_pages_total) * 100
+        except ZeroDivisionError:
+            return 0
+    
+    @property
+    def innodb_buffer_pool_hit_rate(self):
+        status = self.status
+        try:
+            return (1 - status.innodb_buffer_pool_reads / 
+                        status.innodb_buffer_pool_read_requests) * 100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def innodb_log_file_size_total(self):
+        vars = self.vars
+        return (vars.innodb_log_file_size * 
+                vars.innodb_log_files_in_group)
+                
+    @property
+    def innodb_flush_method(self):
+        vars = self.vars
+        if vars.innodb_flush_method == None:
+            return 'FSYNC'
+        else:
+            return vars.innodb_flush_method
+        
+    @property
+    def slow_query_pct(self):
+        status = self.status
+        total_queries = sum([status[key] for key in ('com_select', 
+                                                    'com_insert',
+                                                    'com_update',
+                                                    'com_delete')])
+        try:
+            return (status.slow_queries / total_queries) * 100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def read_pct(self):
+        status = self.status
+        total_queries = sum([status[key] for key in ('com_select',
+                                                    'com_insert',
+                                                    'com_update',
+                                                    'com_delete')])
+        try:
+            return (status.com_select / total_queries) * 100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def tmp_tables_disk_pct(self):
+        status = self.status
+        try:
+            return (status.created_tmp_disk_tables / 
+                    status.created_tmp_tables) * 100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def table_locks_total(self):
+        status = self.status
+        return(status.table_locks_waited + status.table_locks_immediate)
+
+    @property
+    def table_lock_wait_pct(self):
+        status = self.status
+        try:
+            return (status.table_locks_waited /
+                    (status.table_locks_waited +
+                    status.table_locks_immediate)) * 100
+        except ZeroDivisionError:
+            return 0
+
+    @property
+    def table_scans_pct(self):
+        status = self.status
+        try:
+            return (status.handler_read_rnd_next + \
+                    status.handler_read_rnd) / \
+                    (status.handler_read_rnd_next + 
+                     status.handler_read_rnd + status.handler_read_first +
+                     status.handler_read_next + status.handler_read_key + 
+                     status.handler_read_prev) * 100
+        except ZeroDivisionError:
+            return 0
+            
+    @property
+    def query_cache_hitrate(self):
+        status = self.status
+        try:
+            return (status.qcache_hits / 
+                    (status.qcache_hits + 
+                    status.com_select)) * 100
+        except ZeroDivisionError:
+            return 0
+
+
+class Transaction(object):
+    """Simple representation of an InnoDB Transaction"""
+    # transaction id
+    xid = None
+    # transaction status (ACTIVE, not started, etc.)
+    status = None 
+    # how long the transaction has been active in seconds
+    active_time = None 
+    # mysqld pid (useless :P)
+    pid = None 
+    # OS level thread id (also likely useless for most cases :P)
+    os_tid = None
+
+    def __repr__(self):
+        """Pretty-format for this transaciton.  List all the attributes set 
+        on this instance.
+        """
+        return '%s(%s)' % (
+            self.__class__.__name__,
+            ', '.join(['%s=%r' % (name, getattr(self, name)) 
+                     for name in dir(self) if not name.startswith('_')])
+        )
+
+class InnodbStatus(object):
+    def __init__(self, status_text):
+        self.status_text = status_text
+
+    @property
+    def timestamp(self):
+        """Timestamp this was generated at"""
+        cre = re.compile(r'^(?P<timestamp>\d{6} (?:\d| )\d:\d{2}:\d{2}) '
+                         r'INNODB MONITOR OUTPUT$', re.M|re.U)
+        m = cre.search(self.status_text)
+        if not m:
+            raise ValueError("Failed to parse innodb status")
+
+        timestamp = time.strptime(m.group('timestamp'), '%m%d%y %H:%M:%S') 
+        return time.strftime('%Y-%m-%d %H:%M:%S', timestamp)
+
+    @property
+    def time_secs(self):
+        """Time period this output was calculated over for per second averages"""
+        cre = re.compile(r'^Per second averages calculated from the last '
+                         r'(\d+) seconds$', re.M|re.U)
+        m = cre.search(self.status_text)
+
+        if not m:
+            raise ValueError("Failed to parse innodb status text")
+
+        return int(m.group(1))
+
+    @property
+    def history_list_length(self):
+        """How large is the purge thread lagging behind?"""
+        cre = re.compile('^History list length (\d+)', re.M|re.U)
+        m = cre.search(self.status_text)
+        if not m:
+            raise ValueError()
+
+        return int(m.group(1))
+
+    @property
+    def complete(self):
+        """Whether all the output was included here
+        Output may be truncated to 64K
+        """
+        cre = re.compile(r'^END OF INNODB MONITOR OUTPUT$', re.M|re.U)
+        m = cre.search(self.status_text)
+
+        return m is not None
+
+    @property
+    def transactions(self):
+        """Iterate over transactions
+        
+        Yields Transaction instances for any transactions (active or not)
+        """
+        tx_cre = re.compile(r'(---TRANSACTION \d.*?)(?=\n---T|--------|$)',
+                         re.S)
+
+        def parse_transaction(txn):
+            """Parse an individual transaction"""
+            tx_dtl_cre = re.compile(r'(?:---)?TRANSACTION (?P<xid>\d+ \d+), '
+                                    r'(?P<status>\D*?)'
+                                    r'(?: (?P<active_time>\d+) sec)?, '
+                                    r'(?:process no (?P<pid>\d+), )?'
+                                    r'OS thread id (?P<os_tid>\d+)')
+
+            m = tx_dtl_cre.match(txn)
+            if not m:
+                raise ValueError(txn)
+            else:
+                txn_obj = Transaction()
+                for attr in ('xid', 'status', 'active_time', 'pid', 'os_tid'):
+                    value = m.group(attr)
+                    try:
+                        if value is not None:
+                            value = int(value)
+                    except ValueError:
+                        pass
+                    setattr(txn_obj, attr, value)
+                return txn_obj
+
+        for txn in tx_cre.findall(self.status_text):
+            yield parse_transaction(txn)
+
+"""
+if __name__ == '__main__':
+    warnings.simplefilter('ignore')
+
+    class Client(object):
+        def __init__(self, *args, **kwargs):
+            self._connection = MySQLdb.connect(*args, **kwargs)
+
+        def ibstatus(self):
+            cursor = self._connection.cursor()
+            cursor.execute('show engine innodb status')
+            return cursor.fetchone()[-1]
+
+    client = Client(read_default_group='client')
+    status = InnodbStatus(client.ibstatus())
+
+    for i, txn in enumerate(status.transactions):
+        print "TRANSACTION(%d)" % i
+        print txn
+"""
+#!/usr/bin/env python
+
+"""
+Dolphin Hunter
+MySQL Runtime Analyzer
+
+Author: Tim "Sweetums" Soderstrom
+With contributions from BJ Dierkes and Andrew Garner
+"""
+
+import sys
+
+if sys.version_info < (2, 4):
+    print "Python 2.4 or later required. Sorry"
+    sys.exit(1)
+
+import platform
+import os
+import string
+import warnings
+
+warnings.simplefilter("ignore")
+
+import MySQLdb
+
+
+##################
+# Global Variables
+##################
+version = '0.7.2'
+# How many items to list from list output
+# (Such as information_schema reuslts)
+limit = 10
+
+# Constant for 2 days
+TWO_DAYS_IN_SECONDS = 60 * 60 * 24 * 2
+
+####################
+# Display Functions
+###################
+def display_system_info(mysql):
+    system_info = dict()
+    print "Gathering system information...",
+
+    system_info['architecture'] = platform.machine()
+    if platform.system() == 'Linux':
+        system_info['totalMemory'] = format_bytes(round(os.sysconf('SC_PHYS_PAGES') * \
+            os.sysconf('SC_PAGE_SIZE')), 0)
+        system_info['freeMemory'] = format_bytes(os.sysconf('SC_AVPHYS_PAGES') * \
+            os.sysconf('SC_PAGE_SIZE'))
+        system_info['cpuCores'] = os.sysconf('SC_NPROCESSORS_CONF')
+    else:
+        system_info['totalMemory'] = 'Unknown'
+        system_info['freeMemory'] = 'Unknown'
+        system_info['cpuCores'] = 'Unknown'
+    print "done!\n"
+
+    print_header('Local System Information', 1)
+    print_stat('CPU Cores', system_info['cpuCores'], 1)
+    print_stat('Total Memory', system_info['totalMemory'], 1)
+    print_stat('System Architecture', system_info['architecture'], 1)
+
+def display_mysql_global_results(mysql_info):
+    print_header('Global Information', 2)
+    print_stat('Server ID', int(mysql_info.vars.server_id))
+    print_stat('MySQL Architecture',
+        mysql_info.vars.version_compile_machine, 1)
+    print_stat('MySQL Version', mysql_info.vars.version, 1)
+    print_stat('Data Directory', mysql_info.vars.datadir)
+    print_stat("Uptime", format_interval(mysql_info.status.uptime))
+    print_stat('Max Allowed Packet',
+        format_bytes(mysql_info.vars.max_allowed_packet))
+    print_stat("Connections", "%s of %s" % \
+        (int(mysql_info.status.max_used_connections),
+         int(mysql_info.vars.max_connections)))
+    print_stat("Disk Based Temp Tables", "%s of %s (%s)" % \
+        (int(mysql_info.status.created_tmp_disk_tables),
+         int(mysql_info.status.created_tmp_tables),
+         format_percent(mysql_info.tmp_tables_disk_pct)))
+    print_stat("Sort Merge Passes",
+        int(mysql_info.status.sort_merge_passes))
+    print_stat("Non-Indexed Joins",
+        int(mysql_info.status.select_full_join))
+    print_stat("Open Files", '%s (limit %s)' % \
+        (int(mysql_info.status.open_files),
+         int(mysql_info.vars.open_files_limit)))
+    print_stat("Open Tables",
+        int(mysql_info.status.open_tables))
+    if mysql_info.vars.query_cache_size == 0:
+	print_stat("Query Cache", "Disabled")
+    else:
+    	print_stat("Query Cache"),
+        print_stat("Size",
+            format_bytes(mysql_info.vars.query_cache_size), 2)
+        print_stat("Hit Rate",
+            format_percent(mysql_info.query_cache_hitrate), 2)
+    print_stat("Table Lock Waits", "%s of %s (%s)" % \
+        (int(mysql_info.status.table_locks_waited),
+         int(mysql_info.table_locks_total),
+         format_percent(mysql_info.table_lock_wait_pct)))
+    print_stat("Estimated Table Scans",
+        format_percent(mysql_info.table_scans_pct))
+    print_stat("Slow Queries")
+    print_stat("Queries", "%s of %s (%s)" % \
+        (int(mysql_info.status.slow_queries),
+         int(mysql_info.status.com_select),
+         format_percent(mysql_info.slow_query_pct)), 2)
+    print_stat("Long Query Time",
+        format_interval(mysql_info.vars.long_query_time), 2)
+    print_stat("Log Non-Indexed Queries",
+        mysql_info.vars.log_queries_not_using_indexes, 2)
+    print_stat('Binary Log', '')
+    print_stat('Binary Logging',
+        mysql_info.vars.log_bin, 2)
+    try:
+        print_stat('Binlog Format',
+            mysql_info.vars.binlog_format, 2)
+    except KeyError:
+        print_stat('Binlog Format', 'Not-Detected / Pre 5.1', 2)
+    print_stat("Read Frequency", format_percent(mysql_info.read_pct))
+
+def display_mysql_myisam_results(mysql_info):
+    print_header("MyISAM", 2)
+    print_stat("Key Buffer")
+    print_stat("Size", format_bytes(mysql_info.vars.key_buffer_size), 2)
+    print_stat("Used",  "%s (%s)" % \
+        (format_bytes(mysql_info.key_buffer_used),
+         format_percent(mysql_info.key_buffer_used_pct)), 2)
+
+def display_mysql_innodb_results(mysql_info):
+    print_header("InnoDB", 2)
+    if mysql_info.vars.innodb_version == ('DISABLED' or False):
+        print "Disabled"
+    else:
+        try:
+            print_stat('Version', mysql_info.vars.innodb_version)
+        except KeyError:
+            print_stat('Version', 'Default')
+        print_stat('Paths','')
+        print_stat('InnoDB Home Directory',
+            mysql_info.vars.innodb_data_home_dir, 2)
+        print_stat("InnoDB Log Directory",
+            mysql_info.vars.innodb_log_group_home_dir, 2)
+        print_stat("InnoDB Data File Path",
+            mysql_info.vars.innodb_data_file_path, 2)
+        print_stat('Buffer Pool', '')
+        print_stat("Usage", "%s of %s (%s)" % \
+            (format_bytes(mysql_info.innodb_buffer_pool_used),
+             format_bytes(mysql_info.vars.innodb_buffer_pool_size),
+             format_percent(mysql_info.innodb_buffer_pool_used_pct)), 2)
+        print_stat("Hit Rate",
+            format_percent(mysql_info.innodb_buffer_pool_hit_rate), 2)
+        print_stat('History List', mysql_info.ibstatus.history_list_length)
+        print_stat("File Per Table",
+            mysql_info.vars.innodb_file_per_table)
+        if mysql_info.vars.innodb_file_per_table:
+            print_stat("InnoDB Open Files",
+                int(mysql_info.vars.innodb_open_files), 2)
+        print_stat("Flush Log At Commit",
+            int(mysql_info.vars.innodb_flush_log_at_trx_commit))
+        print_stat("Flush Method",
+            mysql_info.innodb_flush_method)
+        print_stat("Thread Concurrency",
+            int(mysql_info.vars.innodb_thread_concurrency))
+        print_stat("Log File Size", "%s x %s logs (%s total)" % \
+            (format_bytes(mysql_info.vars.innodb_log_file_size),
+             int(mysql_info.vars.innodb_log_files_in_group),
+             format_bytes(mysql_info.innodb_log_file_size_total)))
+
+def display_mysql_thread_results(mysql_info):
+    print_header("Threads", 2)
+    print_stat("Buffers")
+    print '      %-9s : %-9s : %-9s : %-9s' % \
+        ('Read', 'Read RND', 'Sort', 'Join')
+    print '      %-9s : %-9s : %-9s : %-9s' % \
+        (format_bytes(mysql_info.vars.read_buffer_size),
+         format_bytes(mysql_info.vars.read_rnd_buffer_size),
+         format_bytes(mysql_info.vars.sort_buffer_size),
+         format_bytes(mysql_info.vars.join_buffer_size))
+    print_stat("Threads")
+    print '      %-9s : %-9s : %-9s : %-9s' % \
+         ('Size', 'Cached', 'Running', 'Created')
+    print '      %-9s : %-9s : %-9s : %-9s' % \
+        (int(mysql_info.vars.thread_cache_size),
+        int(mysql_info.status.threads_cached),
+        int(mysql_info.status.threads_running),
+        int(mysql_info.status.threads_created))
+
+def display_slave_info(mysql_info):
+    print_header('Replication', 2)
+
+    if mysql_info.slave_status is None:
+        print "Not Enabled"
+        return
+    print_stat('Master',
+        mysql_info.slave_status.master_host)
+    print_stat('Logs', '')
+    print_stat('Spooled Master Log File',
+        '%s (pos: %s)' % \
+        (mysql_info.slave_status.master_log_file,
+         mysql_info.slave_status.read_master_log_pos), 2)
+    print_stat('Executed Master Log File',
+        '%s (pos: %s)' % \
+        (mysql_info.slave_status.relay_master_log_file,
+         mysql_info.slave_status.exec_master_log_pos), 2)
+    print_stat('Relay Log File',
+        '%s (pos: %s)' % \
+        (mysql_info.slave_status.relay_log_file,
+         mysql_info.slave_status.relay_log_pos), 2)
+    # Using a long-style if for Python 2.4 compatibility
+    #print_stat('Relay Log Space Limit',
+    #(format_bytes(mysql_info.vars.relay_log_space_limit))
+    # if mysql_info.vars.relay_log_space_limit != 0 else 'Unlimited')
+    if mysql_info.vars.relay_log_space_limit != 0:
+        print_stat('Relay Log Space Limit',
+            format_bytes(mysql_info.vars.relay_log_space_limit))
+    else:
+        print_stat('Relay Log Space Limit', 'Unlimited')
+    print_stat('IO Thread Running',
+        mysql_info.slave_status.slave_io_running)
+    print_stat('SQL Thread Running',
+        mysql_info.slave_status.slave_sql_running)
+    print_stat('Seconds Behind Master',
+        mysql_info.slave_status.seconds_behind_master)
+    print_stat('Last Error',
+        mysql_info.slave_status.last_error)
+
+def display_mysql_results(mysql):
+    print ""
+    mysql_info = mysql.mysql_info
+    print ""
+    print_header('MySQL Information', 1)
+    print ""
+    display_mysql_global_results(mysql_info)
+    print ""
+    display_mysql_thread_results(mysql_info)
+    print ""
+    display_mysql_myisam_results(mysql_info)
+    print ""
+    display_mysql_innodb_results(mysql_info)
+    print ""
+    display_slave_info(mysql_info)
+
+
+def display_innodb_transactions(mysql):
+    print ""
+    print_header("InnoDB Transactions")
+    try:
+        for i, txn in enumerate(mysql.mysql_info.ibstatus.transactions):
+            print "TRANSACTION(%d)" % i
+            print txn
+    except ValueError:
+        print "Unable To Parse SHOW ENGINE INNODB STATUS"
+
+def display_schema_info(mysql):
+    print ""
+    print_header("Schema Information")
+    print ""
+    print_header("Engine Breakdown", 2)
+    print '%-8s : %8s : %12s : %12s' % \
+        ('Engine', '# Tables', 'Data Length', 'Index Length')
+    for row in mysql.schema_engine_summary:
+        print '%-8s : %8s : %12s : %12s' % \
+            (row['Engine'],
+            row['Count'],
+            format_bytes(row['Data Length']),
+            format_bytes(row['Index Length']))
+    print ""
+    print_header('%s Largest Databases' % limit, 2)
+    print '%-32s : %12s : %12s' % \
+        ('Database', 'Data Length', 'Index Length')
+    for row in mysql.schema_largest_dbs(limit):
+        print '%-32s : %12s : %12s' % \
+            (row['Database'],
+            format_bytes(row['Data Length']),
+            format_bytes(row['Index Length']))
+    print ""
+    print_header('%s Largest Tables' % limit, 2)
+    print '%-32s : %12s : %12s' % \
+        ('Table', 'Data Length', 'Index Length')
+    for row in mysql.schema_largest_tables(limit):
+        print '%-32s : %12s : %12s' % \
+            (row['Table'],
+            format_bytes(row['Data Length']),
+            format_bytes(row['Index Length']))
+
+
+def check_health(mysql):
+    errors = ""
+    print_header("Health Checks")
+    mysql_info = mysql.mysql_info
+    print ""
+
+    if mysql_info.queries['long_running_queries'] > 0:
+	errors += "One or more long running queries detected\n"
+
+    if mysql_info.slave_status:
+        if mysql_info.slave_status.slave_io_running != 'Yes':
+            errors += "Slave IO Thread Not Running\n"
+        if mysql_info.slave_status.slave_sql_running != 'Yes':
+            errors += "Slave SQL Thread Not Running\n"
+        if mysql_info.slave_status.seconds_behind_master > 300:
+            errors +=  "Slave Lagging Too Far Behind\n"
+        if mysql_info.slave_status.last_error:
+            errors +=  "Slave Error Reported\n"
+
+    # If wsrep variable does not exist, we can assume it is not
+    # a Galera server, so we skip the checks
+    try:
+      if mysql_info.vars.wsrep_provider:
+          if mysql_info.status.wsrep_cluster_size < 3:
+              errors += "Galera Node Missing\n"
+          if not mysql_info.status.wsrep_ready:
+              errors += "Galera Cluster Not Ready\n"
+    except:
+        pass
+
+    # Same thing as above - if, somehow InnoDB is not enabled
+    # we don't need to check parameters for it. There could
+    # be cases where you'd want to error if InnoDB is unavailable
+    # but using 'innodb = FORCE' within MySQL is a better solution.
+    try:
+        if mysql_info.vars.innodb_version:
+            if mysql_info.innodb_buffer_pool_hit_rate < 95:
+                errors += "InnoDB Buffer Pool Hit Rate Under 95%\n"
+        if (mysql_info.status.threads_connected /
+            mysql_info.vars.max_connections * 100) > 75:
+                errors += "Open Connections Above 75% of Max\n"
+    except:
+        pass
+
+    if errors != "":
+        print errors
+        sys.exit(1)
+    else:
+        print "Everything is all good!"
+        sys.exit(0)
+
+#################
+# Meat & Potatoes
+#################
+
+# Preamble
+print("""
+                        |
+                        |
+                        |
+                        |          __
+                        |      _.-~  )
+                    _..-|~~~~,'   ,-/     _
+                 .-'. . | .'   ,-','    ,' )
+               ,'. . . _|  ,--~,-'__..-'  ,'
+             ,'. . .  (@|' ---~~~~      ,'
+------------------------+------------------------
+           /. . . . .   |         ,-'
+          ; . . . .  - .|       ,'
+         : . . . .      |_     /
+        . . . . .       |  `-.:
+       . . . ./  - .    |     )
+      .  . . |  _____..-|-.._/ _____
+~---~~~~----~~~~        |    ~~
+                        |
+                        |
+
+Dolphin Hunter v%s
+MySQL Runtime Analyzer
+Author: Tim "Sweetums" Soderstrom
+With contributions from BJ Dierkes and Andrew Garner
+
+""" % version)
+
+# Callback for OptionParser when -a is used
+def set_all(option, opt, value, parser):
+    parser.values.actions.extend([
+        (10, display_system_info),
+        (20, display_mysql_results),
+        (30, display_innodb_transactions),
+        (40, display_schema_info),
+        ])
+
+# For Python 2.4 compatibility
+def append_const_callback(priority, const):
+    def callback( option, opt_str, value, parser ):
+        getattr(parser.values, option.dest).append((priority, const))
+    return callback
+
+# Main
+def main():
+    # The numbers before the function in const denote priority to make sure
+    # the output is always in the same order. It also helps avoid priting
+    # information more than once.
+    parser = OptionParser()
+    parser.add_option('-a', '--all', action='callback', type=None,
+        callback=set_all,
+        help="Gather all possible information")
+    parser.add_option('-y', '--system', action='callback',
+        dest="actions", callback=append_const_callback(10,display_system_info),
+        help="Print System Information")
+    parser.add_option('-i', '--info', action='callback',
+        dest="actions", callback=append_const_callback(20,display_mysql_results),
+        help="MySQL Information")
+    parser.add_option('-t', '--transactions', action='callback',
+        dest="actions", callback=append_const_callback(30, display_innodb_transactions),
+        help='Display InnoDB transactions')
+    parser.add_option('-s', '--schema', action='callback',
+        dest="actions", callback=append_const_callback(40, display_schema_info),
+        help="Print Schema Statistics (Avoid For Large #'s of Tables/DBs)")
+    parser.add_option('-m', '--monitor', action='callback',
+        dest="actions", callback=append_const_callback(50, check_health),
+        help="Look at various metrics in MySQL and bomb if there is a problem. Useful for things like Monit")
+
+    mysql_login_group = OptionGroup(parser, "MySQL Login Options")
+    mysql_login_group.add_option('-u', '--username', dest="user",
+        help="MySQL User")
+    mysql_login_group.add_option('-p', '--password', dest="passwd",
+        help="MySQL Password")
+    mysql_login_group.add_option('-H', '--hostname', dest="host",
+        help="MySQL host to connect to")
+    mysql_login_group.add_option('-P', '--port', dest='port',
+        type='int', help="MySQL port to connect to")
+    mysql_login_group.add_option('-S', '--socket', dest="unix_socket",
+        help="Path to MySQL unix socket")
+    parser.add_option_group(mysql_login_group)
+
+    parser.set_defaults(actions=[])
+    opts, args = parser.parse_args()
+
+    # Pull out MySQL login information passed from command-line
+    connection_args = {}
+    for key in ('user', 'passwd', 'host', 'port', 'unix_socket'):
+        value = getattr(opts, key)
+        if value is not None:
+            connection_args[key] = value
+
+    # Display help by default
+    if not opts.actions:
+        parser.print_help()
+        return 0
+
+    # Iterate through actions and call functions magically
+    mysql = MySQL(read_default_group='client', charset='utf8', **connection_args)
+    for priority, action in sorted(set(opts.actions)):
+        action(mysql)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
