@@ -818,6 +818,12 @@ def display_schema_info(mysql):
 
 def check_health(mysql):
     global opts
+   
+    if opts.max_replication_delay:
+        max_replication_delay = opts.max_replication_delay
+    else:
+        max_replication_delay = 300
+
     errors = ""
     print_header("Health Checks")
     mysql_info = mysql.mysql_info
@@ -831,7 +837,7 @@ def check_health(mysql):
             errors += "Slave IO Thread Not Running\n"
         if mysql_info.slave_status.slave_sql_running != 'Yes':
             errors += "Slave SQL Thread Not Running\n"
-        if mysql_info.slave_status.seconds_behind_master > opts.max_replication_delay:
+        if mysql_info.slave_status.seconds_behind_master > max_replication_delay:
             errors +=  "Slave Lagging Too Far Behind\n"
         if mysql_info.slave_status.last_error:
             errors +=  "Slave Error Reported\n"
