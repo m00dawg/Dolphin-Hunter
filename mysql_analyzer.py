@@ -429,6 +429,13 @@ def main():
         help="Path to MySQL unix socket")
     parser.add_option_group(mysql_login_group)
 
+    monitor_group = OptionGroup(parser, "Monitor Options")
+    monitor_group.add_option('-d', '--delay', dest="max_replication_delay",
+        help="Max replication delay allowed before Dolphin Hunter complains")
+    parser.add_option_group(monitor_group)
+
+
+
     parser.set_defaults(actions=[])
     opts, args = parser.parse_args()
 
