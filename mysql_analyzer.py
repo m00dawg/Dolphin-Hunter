@@ -34,7 +34,7 @@ from colorize import color_print
 ##################
 # Global Variables
 ##################
-version = '0.7.2'
+version = '0.7.3'
 # How many items to list from list output
 # (Such as information_schema reuslts)
 limit = 10
@@ -293,20 +293,21 @@ def display_schema_info(mysql):
 
 
 def check_health(mysql):
+    global opts
     errors = ""
     print_header("Health Checks")
     mysql_info = mysql.mysql_info
     print ""
 
     if mysql_info.queries['long_running_queries'] > 0:
-	errors += "One or more long running queries detected\n"
+	    errors += "One or more long running queries detected\n"
 
     if mysql_info.slave_status:
         if mysql_info.slave_status.slave_io_running != 'Yes':
             errors += "Slave IO Thread Not Running\n"
         if mysql_info.slave_status.slave_sql_running != 'Yes':
             errors += "Slave SQL Thread Not Running\n"
-        if mysql_info.slave_status.seconds_behind_master > 300:
+        if mysql_info.slave_status.seconds_behind_master > opts.max_replication_delay:
             errors +=  "Slave Lagging Too Far Behind\n"
         if mysql_info.slave_status.last_error:
             errors +=  "Slave Error Reported\n"
@@ -393,6 +394,7 @@ def append_const_callback(priority, const):
 
 # Main
 def main():
+    global opts
     # The numbers before the function in const denote priority to make sure
     # the output is always in the same order. It also helps avoid priting
     # information more than once.
@@ -431,6 +433,7 @@ def main():
 
     monitor_group = OptionGroup(parser, "Monitor Options")
     monitor_group.add_option('-d', '--delay', dest="max_replication_delay",
+        type="int",
         help="Max replication delay allowed before Dolphin Hunter complains")
     parser.add_option_group(monitor_group)
 
